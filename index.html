@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Munich City Tour - Multi-Layout Edition</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            font-family: ui-sans-serif, system-ui, sans-serif;
+        }
+
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        #slider-container {
+            transition: transform 0.8s cubic-bezier(0.645, 0.045, 0.355, 1);
+        }
+
+        .swipe-map-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: #f1f5f9;
+        }
+
+        .map-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .map-left {
+            z-index: 20;
+            background: transparent;
+            clip-path: inset(0 50% 0 0);
+            pointer-events: none;
+        }
+
+        .map-left .leaflet-control-container {
+            display: none;
+        }
+
+        .map-right {
+            z-index: 10;
+        }
+
+        /* swipe-divider */
+        .swipe-divider {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 50%;
+            width: 4px;
+            background-color: transparent;
+            z-index: 30;
+            cursor: col-resize;
+            transform: translateX(-50%);
+            pointer-events: auto;
+        }
+
+        .swipe-divider::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: calc(50% - 16px);
+            background-color: #0d9488;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+            border-radius: 0 0 2px 2px;
+        }
+
+        .swipe-divider::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: calc(50% - 16px);
+            background-color: #0d9488;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+            border-radius: 2px 2px 0 0;
+        }
+
+        /* swipe-button */
+        .swipe-handle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 32px;
+            height: 32px;
+            background-color: transparent;
+            border: 2px solid rgba(13, 148, 136, 0.4);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: none;
+            backdrop-filter: none;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+        }
+
+        .swipe-handle svg {
+            opacity: 0;
+            transform: scale(0.5);
+            transition: all 0.3s;
+        }
+
+        .swipe-divider:hover .swipe-handle {
+            background-color: rgba(255, 255, 255, 0.1);
+            border-color: #0d9488;
+            box-shadow: 0 0 10px rgba(13, 148, 136, 0.2);
+        }
+
+        .swipe-divider.dragging .swipe-handle {
+            background-color: white;
+            border-color: #0d9488;
+            transform: translate(-50%, -50%) scale(1.15);
+            box-shadow: 0 0 0 4px rgba(13, 148, 136, 0.2);
+        }
+
+        .swipe-divider.dragging .swipe-handle svg {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .leaflet-control-zoom {
+            display: none;
+        }
+
+        .year-btn-active {
+            background-color: #0d9488 !important;
+            color: white !important;
+            transform: scale(1.1);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        .loading-spinner {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 3px solid #0d9488;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .leaflet-image-layer.rotated-layer {
+            transform-origin: 0 0;
+        }
+
+        #scroll-indicator {
+            left: 25%;
+            transform: translateX(-50%);
+            transition: all 0.5s ease-in-out;
+        }
+
+        #scroll-indicator.center-mode {
+            left: 50%;
+            transform: translateX(-50%);
+        }
+    </style>
+</head>
+
+<body class="bg-gray-900 text-slate-800">
+
+    <div class="relative w-full h-full overflow-hidden">
+        <div id="slider-container" class="w-full h-full absolute top-0 left-0"></div>
+        <div id="dots-container" class="fixed right-6 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-4"></div>
+
+        <!-- scroll-indicator -->
+        <div id="scroll-indicator"
+            class="fixed bottom-8 z-40 text-white mix-blend-difference pointer-events-none opacity-100 transition-opacity duration-500">
+            <div class="flex flex-col items-center animate-bounce">
+                <span class="text-xs font-semibold uppercase tracking-widest mb-1 opacity-70">Scroll</span>
+                <i data-lucide="chevron-down" class="w-5 h-5"></i>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        if (typeof L !== 'undefined') {
+            L.RotatedImageOverlay = L.ImageOverlay.extend({
+                options: { opacity: 1, interactive: false, zIndex: 1 },
+                initialize: function (url, topleft, topright, bottomleft, options) {
+                    this._url = url;
+                    this._topLeft = L.latLng(topleft);
+                    this._topRight = L.latLng(topright);
+                    this._bottomLeft = L.latLng(bottomleft);
+                    if (options && options.rawWidth && options.rawHeight) {
+                        this._rawWidth = options.rawWidth;
+                        this._rawHeight = options.rawHeight;
+                    }
+                    L.ImageOverlay.prototype.initialize.call(this, url, null, options);
+                },
+                onAdd: function (map) {
+                    this._map = map;
+                    if (!this._image) { this._initImage(); }
+                    if (this._rawWidth && this._rawHeight) {
+                        this._image.style.width = this._rawWidth + 'px';
+                        this._image.style.height = this._rawHeight + 'px';
+                    }
+                    map.getPanes().overlayPane.appendChild(this._image);
+                    map.on('viewreset', this._reset, this);
+                    if (map.options.zoomAnimation && L.Browser.any3d) {
+                        map.on('zoomanim', this._animateZoom, this);
+                    }
+                    this._reset();
+                },
+                onRemove: function (map) {
+                    map.getPanes().overlayPane.removeChild(this._image);
+                    map.off('viewreset', this._reset, this);
+                    if (map.options.zoomAnimation) { map.off('zoomanim', this._animateZoom, this); }
+                },
+                _initImage: function () {
+                    var img = this._image = L.DomUtil.create('img', 'leaflet-image-layer rotated-layer ' + (this._zoomAnimated ? 'leaflet-zoom-animated' : ''));
+                    img.onselectstart = L.Util.falseFn; img.onmousemove = L.Util.falseFn;
+                    img.onload = L.bind(this.fire, this, 'load');
+                    img.src = this._url; img.style.position = 'absolute';
+                },
+                _reset: function () {
+                    var map = this._map; if (!map) return;
+                    var p1 = map.latLngToLayerPoint(this._topLeft);
+                    var p2 = map.latLngToLayerPoint(this._topRight);
+                    var p3 = map.latLngToLayerPoint(this._bottomLeft);
+                    var w = this._rawWidth || p1.distanceTo(p2);
+                    var h = this._rawHeight || p1.distanceTo(p3);
+                    var vectorX = p2.subtract(p1); var vectorY = p3.subtract(p1);
+                    var a = vectorX.x / w; var b = vectorX.y / w;
+                    var c = vectorY.x / h; var d = vectorY.y / h;
+                    var tx = p1.x; var ty = p1.y;
+                    this._image.style.transform = `matrix(${a}, ${b}, ${c}, ${d}, ${tx}, ${ty})`;
+                },
+                _animateZoom: function (e) {
+                    var map = this._map;
+                    var p1 = map._latLngToNewLayerPoint(this._topLeft, e.zoom, e.center);
+                    var p2 = map._latLngToNewLayerPoint(this._topRight, e.zoom, e.center);
+                    var p3 = map._latLngToNewLayerPoint(this._bottomLeft, e.zoom, e.center);
+                    var w = this._rawWidth || 1; var h = this._rawHeight || 1;
+                    var vectorX = p2.subtract(p1); var vectorY = p3.subtract(p1);
+                    var a = vectorX.x / w; var b = vectorX.y / w;
+                    var c = vectorY.x / h; var d = vectorY.y / h;
+                    var tx = p1.x; var ty = p1.y;
+                    this._image.style.transform = `matrix(${a}, ${b}, ${c}, ${d}, ${tx}, ${ty})`;
+                }
+            });
+        }
+
+        // =========================================================================
+        // 1. Data set
+        // =========================================================================
+
+        const HISTORICAL_LAYERS = [
+            {
+                year: "1720",
+                label: "1720 - ",
+                imageUrl: "https://github.com/Reinhard7777/Mapping_Project/blob/main/Maps/Munich_1720.jpg?raw=true",
+                width: 9849, height: 7302,
+                jgwx: { A: 0.185250198439818298, D: 0.402073214058034867, B: 0.402073214058034867, E: -0.185250198439818298, C: 1286387.58245072723, F: 6128628.48830504343 }
+            },
+            {
+                year: "1888",
+                label: "1888 - ",
+                imageUrl: "https://github.com/Reinhard7777/Mapping_Project/blob/main/Maps/Munich_1888.jpg?raw=true",
+                width: 11667, height: 8066,
+                jgwx: { A: 1.27879980047585673, D: -0.00533220235155204905, B: 0.0114143271530159976, E: -1.27791257713343742, C: 1282072.04445511079, F: 6135057.13305498008 }
+            },
+            {
+                year: "1914",
+                label: "1914 - ",
+                imageUrl: "https://github.com/Reinhard7777/Mapping_Project/blob/main/Maps/Munich_1914.jpg?raw=true",
+                width: 10137, height: 13540,
+                jgwx: { A: 1.70199250508640021, D: 0.000811960285364981453, B: 0.00411914799706246913, E: -1.69704136600988065, C: 1277886.08663142775, F: 6139979.51699057687 }
+            },
+            {
+                year: "1949",
+                label: "1949 - ",
+                imageUrl: "https://github.com/Reinhard7777/Mapping_Project/blob/main/Maps/Munich_1949.jpg?raw=true",
+                width: 5960, height: 6084,
+                jgwx: { A: 0.635925660394092707, D: -0.00254237628476404118, B: 0.00103168126302693184, E: -0.63574851595892079, C: 1286405.94947982696, F: 6131870.27365461364 }
+            }
+        ];
+
+        // Slide set
+        const slidesData = [
+            {
+                id: 0,
+                type: 1, // Main cover
+                isMainCover: true, 
+                title: "MÜNCHEN",
+                subtitle: "Eine historische Reise durch die Zeit",
+                image: "https://github.com/jafarsaidov/CartoRewind/blob/main/design/cover1.png?raw=true"
+            },
+            // === Stage 1：1650-1800 ===
+            {
+                id: 1,
+                type: 1, // stage cover
+                isMainCover: false, 
+                // use <span class="whitespace-nowrap"> to avoid time be divided
+                title: `A City of Bells and Thrones<br><span class="text-3xl md:text-5xl opacity-90 block mt-2">(1650 – 1800)</span>`,
+                subtitle: "Urban Imagery Dominated by Religion and Royalty",
+                image: "https://github.com/Reinhard7777/Mapping_Project/blob/main/Maps/Munich_1720.jpg?raw=true"
+            },
+            {
+                id: 2,
+                type: 0, // map page
+                title: "Frauenkirche",
+                subtitle: "The City’s Red-Brick Spiritual Compass",
+                description:
+                `The Cathedral of Our Dear Lady (Frauenkirche) stands as the definitive monument to Munich’s early spiritual prominence and the ancestral legacy of the Wittelsbach dynasty. Its history began with a 13th-century 
+                chapel that served as the burial site for Holy Roman Emperor Ludwig the Bavarian. As the city’s population and civic pride swelled in the 15th century, Duke Sigismund commissioned a grander structure to reflect Munich’s 
+                rising status within the Holy Roman Empire.
+                <br><br>Architect Jörg von Halsbach began the Late Gothic masterpiece in 1468. Due to the lack of local stone quarries, he utilized red brick—a pragmatic choice that evolved into a unique aesthetic symbol of the city. 
+                The construction was remarkably swift for its time, taking only twenty years, with the towers famously topped with their iconic "onion domes" (Welschen Hauben) by 1525.
+                <br><br>Beyond its physical scale, the cathedral became a Spiritual Citadel during the Counter-Reformation. In 1580, the relics of Saint Benno were transferred here, a move orchestrated by the ruling house to symbolize 
+                their unwavering devotion and the city’s identity as a bastion of traditional faith. The interior, housing the monumental tomb of Ludwig the Bavarian, solidified the bond between the divine order and the ducal house, ensuring 
+                the cathedral remained the undisputed center of the medieval core.`,
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Frauenkirche_M%C3%BCnchen.jpg/500px-Frauenkirche_M%C3%BCnchen.jpg",
+                lat: 48.138580, lng: 11.573560,
+                defaultLayerIndex: 0, // 1720
+                initialZoom: 16
+            },
+            {
+                id: 3,
+                type: 0, 
+                title: "Munich Residenz",
+                subtitle: "The Fortified Heart of Dynastic Authority",
+                description: `The Munich Residenz serves as the ultimate architectural testament to the Wittelsbach dynasty’s consolidation of power over Bavaria. Its history began in the late 14th century with 
+                the Neuveste, a Gothic water castle built as a secure refuge following a failed citizens' uprising. Tellingly, its largest tower, the Silver Tower, was positioned to face the city rather than the 
+                exterior, acting as a fortified inner front against the townspeople. By the late 15th century, Duke Albrecht IV had successfully pushed back civic autonomy, and the court began to dictate the city’s destiny.
+                <br><br>In the 16th century, the Residenz transitioned from a defensive fortress to a modern palace when Duke Wilhelm IV moved the official seat here from the Alter Hof. This era saw the creation of the 
+                Antiquarium (1568–1571), the largest Renaissance hall north of the Alps, reflecting a new cultural dominance that reached beyond the old castle walls.
+                <br><br>The palace reached its architectural peak under Maximilian I around 1600, who expanded the complex with the Mannerist Kaiserhof (Emperor’s Court) and the Hofkapelle. These structures were designed to 
+                project an image of sovereign grandeur, establishing the Residenz as a premier European power seat that surpassed even the Vienna Hofburg in scale.`,
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/MABBB90.JPG/500px-MABBB90.JPG",
+                lat: 48.141187, lng: 11.579042,
+                defaultLayerIndex: 0, // 1720
+                initialZoom: 16
+            },
+            {
+                id: 4,
+                type: 0, 
+                title: "Theatinerkirche",
+                subtitle: "A Sacred Vow of Baroque Magnificence",
+                description: `The St. Kajetan Theatinerkirche serves as a grand monument to royal gratitude and the flourishing of High Baroque art in Munich. Its history is rooted in a 1659 vow made by Electress Henriette 
+                Adelaide of Savoy, who pledged to build the "most beautiful and valuable church" in thanks for the birth of a long-awaited heir, Max II Emanuel. Strategically located at the city's northern gate opposite the 
+                Residenz, the church transformed the urban core into a stage for sovereign display and religious devotion.
+                <br><br>Designed by Agostino Barelli, the church was modeled after Rome’s Sant’Andrea della Valle, introducing the Mediterranean dome-basilica form to the Isar. Architect Enrico Zuccalli later completed the 
+                71-meter high dome and twin towers, which were inspired by Venetian masters. The interior, completed in 1688, featured intricate white stucco work by Italian masters, providing a brilliant, theatrical contrast 
+                to the city's older brick structures. Although its iconic yellow Rococo facade—designed by the Cuvilliés family—was not completed until 1768, the church had already functioned for decades as a vital spiritual 
+                bastion for the court. As the burial site for numerous Wittelsbach rulers, the Theatinerkirche anchored the dynasty’s legacy to the divine order, completing the triumvirate of power and faith that defined the early inner city.`,
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Michael_Wening_Da%C3%9F_TheatinerCloster_in_M%C3%BCnchen.jpg/960px-Michael_Wening_Da%C3%9F_TheatinerCloster_in_M%C3%BCnchen.jpg",
+                lat: 48.142069, lng: 11.576618,
+                defaultLayerIndex: 0, // 1720
+                initialZoom: 16
+            },
+            // === Stage 2：1800-1890 ===
+            {
+                id: 5,
+                type: 1,
+                isMainCover: false,
+                title: `Beyond the Walls<br><span class="text-3xl md:text-5xl opacity-90 block mt-2">(1800 – 1890)</span>`,
+                subtitle: "The 'Open' Transformation under Neoclassicism",
+                image: "https://github.com/Reinhard7777/Mapping_Project/blob/main/Maps/Munich_1888.jpg?raw=true"
+            },
+            {
+                id: 6,
+                type: 0,
+                title: "Glyptothek",
+                subtitle: "The Greek Ideal in a Developing Metropolis",
+                description: `As Munich stepped into the 19th century, King Ludwig I envisioned a city that transcended its medieval boundaries, transforming it into a cultural beacon known as "Athens on the Isar." The Glyptothek was the 
+                cornerstone of this ambitious expansion. Conceived by architect Karl von Fischer and realized by Leo von Klenze, the building was part of a grand ensemble at Königsplatz, a square modeled after the Acropolis of Athens. 
+                Unlike the fortified, inward-looking structures of the past, the Glyptothek was embedded in "living greenery," breaking the rigid grid of the Maxvorstadt district to create an oasis of urban tranquility.
+                <br><br>Architecturally, the Glyptothek is a temple of classical strictness. Its slight elevation on the square was designed to mimic ancient Greek temples that sat atop hills, lending the museum an air of divine aesthetic. 
+                The building did not serve a direct administrative purpose or mere royal display; instead, it was dedicated to the ideals of Enlightenment and the celebration of antiquity. Facing the State Antiques Collection across a sprawling 
+                lawn, and flanked by the Propyläen—which served as a symbolic city gate to the once-open fields—the Glyptothek marked Munich’s transition into a modern, open metropolis. It was here that cultural life and civic ideals began to 
+                flourish outside the old city walls, defining a new era of public accessibility to the arts.`,
+                image: "https://pictures.abebooks.com/inventory/15108955907.jpg",
+                lat: 48.146564, lng: 11.565828,
+                defaultLayerIndex: 1, // 1888
+                initialZoom: 16
+            },
+            {
+                id: 7,
+                type: 0,
+                title: "Alte Pinakothek",
+                subtitle: "From Royal Cabinets to the Temple of Public Art",
+                description: `The Alte Pinakothek represents the pinnacle of Munich’s transformation from a royal residence into a public cultural capital during the 19th century. While the collection’s roots reach back to the 16th-century 
+                Kunstkammer of Duke Albrecht V and the expansive acquisitions of Maximilian I, these treasures remained largely scattered and hidden within various royal palaces for centuries. It was King Ludwig I who, driven by the Enlightenment 
+                ideal of public education (Volksbildung), decided to consolidate these masterpieces into a single, accessible sanctuary.
+                <br><br>By commissioning his court architect Leo von Klenze to build a dedicated museum at the city’s then-northern edge in 1826, Ludwig effectively moved art from the "closed" private sphere of the court into the "open" public domain. 
+                Klenze’s design was a global pioneer: it was the first building in the world conceived purely as a gallery for paintings, departing from the typical palace-style museum architecture of the time. Its innovative use of overhead skylights 
+                and north-light cabinets set a new standard for lighting and museum functionality across Europe.
+                <br><br>Opened in 1836, the Alte Pinakothek was then the largest museum building in the world. It housed the vast Wittelsbach collections—including works by Rubens, Dürer, and Raphael—enriched by the unified galleries of Mannheim, Düsseldorf, 
+                and art salvaged during secularization. No longer just a display of dynastic prestige, the museum became a public stage where citizens could engage with art, perfectly embodying the neoclassical spirit of civic enlightenment.`,
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7c/M%C3%BCnchen_Alte_Pinakothek_um_1900.jpg/500px-M%C3%BCnchen_Alte_Pinakothek_um_1900.jpg",
+                lat: 48.148279, lng: 11.569981,
+                defaultLayerIndex: 1, // 1888
+                initialZoom: 16
+            },
+            {
+                id: 8,
+                type: 0,
+                title: "Maximilianeum",
+                subtitle: "The Monumental Climax of Urban Expansion",
+                description: `The Maximilianeum serves as the grand visual climax of the Maximilianstraße, embodying the spirit of Munich’s 19th-century expansion. King Maximilian II laid the foundation stone for this monumental project on October 6, 1857, 
+                entrusting architect Friedrich Bürklein with creating a structure that would majestically overlook the Isar River. While the building was initially envisioned in the Neo-Gothic "Maximilian style," static challenges posed by its position on 
+                the high bank of the Isar—combined with the aesthetic influence of Gottfried Semper—steered the design toward a magnificent Renaissance aesthetic characterized by round arches and columns.
+                <br><br>Finally completed in 1874 after several revisions, the building is dominated by its sweeping 150-meter facade. This expansive front is adorned with intricate mosaics, niches filled with busts, and a central figure of Nike atop the 
+                attic, symbolizing victory and cultural triumph. Its design, featuring three-story open tower arcades at both ends, reflects the era's transition from the "closed" medieval city to an "open" urban landscape that embraced its natural surroundings. 
+                Beyond its royal grandeur, the Maximilianeum was established to house a foundation for gifted students, perfectly aligning with the stage's theme of creating public cultural and educational infrastructure as the city expanded beyond its old walls.`,
+                image: "https://www.sueddeutsche.de/2024/12/23/054f7db5-51ce-471a-ae9d-520604347828.jpeg?q=60&fm=avif&width=1000&rect=317%2C137%2C1479%2C832",
+                lat: 48.136341, lng: 11.594411,
+                defaultLayerIndex: 1, // 1888
+                initialZoom: 16
+            },
+            // === Stage 3：1890-1918 ===
+            {
+                id: 9,
+                type: 1,
+                isMainCover: false,
+                title: `Steam, Steel, and Order<br><span class="text-3xl md:text-5xl opacity-90 block mt-2">(1890 – 1918)</span>`,
+                subtitle: "Embracing Technology in the German Imperial Era",
+                image: "https://github.com/Reinhard7777/Mapping_Project/blob/main/Maps/Munich_1914.jpg?raw=true"
+            },
+            {
+                id: 10,
+                type: 0,
+                title: "Justizpalast",
+                subtitle: "The Administrative Might of the Empire",
+                description: `As Munich integrated into the German Empire, its architecture moved away from royal romanticism toward the monumental administrative power of a modern state. In 1886, the city selected the "Herzoggarten"—a strategic central site located 
+                between the bustling Hauptbahnhof and Karlsplatz—to host the new Justizpalast. Architect Friedrich von Thiersch was commissioned by Prince Regent Luitpold to design a structure in the Neo-Baroque style, the representative aesthetic of the time that 
+                signaled prestige and authority. Completed in 1897, the building replaced the 18th-century Clemensschlössl, physically marking the transition from an old ducal town to an Imperial metropolis.
+                <br><br>The Justizpalast is a masterpiece that bridged historical grandeur with industrial innovation. Its most striking feature is the 66-meter-high glass light dome, a technological marvel of iron and glass that stood in conversation with its neighbor, 
+                the industrial Glaspalast. This dome allowed natural light to flood the massive 19m x 29m central hall, creating a transparent yet imposing heart for the Bavarian legal system. The facades, adorned with a colossal order of columns and statues of Justitia 
+                (Justice), reflected the era's commitment to law and order. However, the city’s growth during this industrial boom was so rapid that the 138-meter-long palace was soon too small. By 1905, Thiersch had already added the "New Justice Building" nearby, 
+                illustrating the immense administrative pressure and dynamic expansion that defined Munich at the turn of the century.`,
+                image: "https://i.ebayimg.com/00/s/MTAwMFgxNTg4/z/aeQAAOSwBX1h4u3T/$_57.JPG?set_id=8800005007",
+                lat: 48.140477, lng: 11.564687,
+                defaultLayerIndex: 2, // 1914
+                initialZoom: 16
+            },
+            {
+                id: 11,
+                type: 0,
+                title: "München Hauptbahnhof",
+                subtitle: "The Engine of Urban Modernization",
+                description: `The maturation of the railway system transformed Munich from a regional residence into a continental hub. The journey began in 1839 with a modest wooden station at Marsfeld, but its distance from the city center and a devastating fire in 
+                1847 necessitated a more permanent and imposing "Centralbahnhof" at its current site. Designed by Friedrich Bürklein in a grand Romanesque-Renaissance style, the new brick station opened in 1849, signaling the arrival of the steam age in Bavaria.
+                <br><br>As Munich entered the Imperial era, the station became the true "city gate," a temple of steel and efficiency that replaced medieval portals. To handle the exploding traffic of the late 19th century, the facility underwent a massive 
+                reconstruction between 1877 and 1883. A monumental forged iron hall with 16 tracks was erected, reflecting the era’s embrace of industrial technology. Beyond its scale, the station was a pioneer of innovation: in 1879, it became the first railway 
+                station in Germany to feature electric lighting, powered by its own on-site generators. Officially renamed "München Hauptbahnhof" in 1904, the hub continued to expand, eventually reaching 36 tracks by 1921 through the addition of specialized wing 
+                stations for local traffic. This complex stood as a physical manifestation of the German Empire’s administrative might and its relentless drive toward an interconnected, industrial future.`,
+                image: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Hauptbahnhof_04.jpg/500px-Hauptbahnhof_04.jpg",
+                lat: 48.140233, lng: 11.560105,
+                defaultLayerIndex: 2, // 1914
+                initialZoom: 15
+            }, {
+                id: 12,
+                type: 0,
+                title: "Deutsches Museum",
+                subtitle: "The Cathedral of Industrial Innovation",
+                description: `The Deutsches Museum stands as a monumental testament to the German Empire's scientific prowess and Munich's full embrace of the 
+                industrial age. While earlier 19th-century technical exhibitions often focused on worker welfare and hygiene, Oskar von Miller envisioned a new type of institution in 1903: one dedicated to scientific education and the celebration of human ingenuity 
+                through "masterpieces of natural science and technology". Founded by a circle of industry giants—including Rudolf Diesel and Wilhelm Conrad Röntgen—the project quickly gained immense national prestige under the patronage of Kaiser Wilhelm II and Prince Ludwig.
+                <br><br>The construction on the "Kohleninsel" (Coal Island) was itself a feat of modern engineering. Due to the island's sandy marshland, thousands of concrete piles had to be driven into the ground to stabilize the foundations for Gabriel von Seidl’s 
+                massive design. Kaiser Wilhelm II personally laid the foundation stone in 1906, emphasizing the museum's role in reflecting the German Empire's achievements in transportation and telecommunications. Although the First World War and subsequent hyperinflation 
+                delayed completion, the museum finally opened its doors in 1925. This landmark effectively shifted Munich’s identity from a traditional royal seat to a global powerhouse of scientific knowledge, embodying the era’s relentless drive toward a technological future.`,
+                image: "https://upload.wikimedia.org/wikipedia/commons/f/fa/BASA-237K-1-351-128-Deutsches_Museum.jpg",
+                lat: 48.129915, lng: 11.583418,
+                defaultLayerIndex: 2, // 1914
+                initialZoom: 16
+            },
+            // === Stage 4：1918-1950 ===
+            {
+                id: 13,
+                type: 1,
+                isMainCover: false,
+                title: `Between Shadow and Renewal<br><span class="text-3xl md:text-5xl opacity-90 block mt-2">(1918 – 1950)</span>`,
+                subtitle: "From Totalitarian Oppression to Post-War Reconstruction",
+                image: "https://github.com/Reinhard7777/Mapping_Project/blob/main/Maps/Munich_1949.jpg?raw=true"
+            },
+            {
+                id: 14,
+                type: 0,
+                title: "Haus der Kunst",
+                subtitle: "The Monument of Ideological Control",
+                description: `The Haus der Kunst stands as a chilling yet crucial witness to the intersection of architecture, ideology, and reconstruction. Following the 1931 fire of the Glaspalast, Adolf Hitler personally intervened, rejecting existing plans to commission his 
+                personal architect, Paul Ludwig Troost, for a monumental "House of German Art". As the regime's first major architectural project, it was designed in a "reduced Neoclassical" style—a severe, 175-meter-long stone structure intended to project an image of timeless 
+                order and racial purity. When it opened in 1937, it served as the definitive stage for Nazi cultural propaganda, hosting the "Great German Art Exhibition" while simultaneously vilifying modernism through the nearby "Degenerate Art" show.
+                <br><br>The building’s post-war history, however, embodies a profound narrative of cultural reconstruction. Surviving World War II almost entirely intact, the "Temple of Art" was temporarily repurposed by the American military as an officers' club. By 1946, the 
+                building began its transformation from a vessel of exclusion into a site of healing and openness. It hosted the first post-war exhibitions of international modern art—works previously banned as "degenerate"—including a landmark show of French Impressionism in 1947. 
+                This transition from a tool of ideological suppression to a leading venue for the global avant-garde perfectly captures Munich’s journey of confronting its dark history through resilient, critical rebirth.`,
+                image: "https://upload.wikimedia.org/wikipedia/commons/a/a3/Bundesarchiv_B_145_Bild-F000899-0005%2C_M%C3%BCnchen%2C_Haus_der_Kunst.jpg",
+                lat: 48.144113, lng: 11.585962,
+                defaultLayerIndex: 3, // 1949 
+                initialZoom: 16
+            },
+            {
+                id: 15,
+                type: 0,
+                title: "Inner City Reconstruction",
+                subtitle: "The Resilient Rebirth of the Medieval Heart",
+                description: `By May 1945, Munich’s historic heart lay in near-total ruin, with over 90% of the inner city decimated by Allied bombing. The city faced a radical choice: should it follow the trend of "Tabula Rasa" (clean slate) modernism—turning the center into a 
+                car-centric, futuristic metropolis—or should it painstakingly salvage its past? Under the visionary guidance of city planner Karl Meitinger, Munich chose the latter, embarking on what became known as the "Munich Way." This approach favored "Critical Reconstruction," 
+                which aimed to restore the medieval street layout and the iconic silhouettes of lost landmarks like the Frauenkirche and Marienplatz.
+                <br><br>A key figure in this process was architect Hans Döllgast, who famously repaired the Alte Pinakothek and other structures using a technique of "visible scars." Rather than perfectly mimicking the original facades, he used simple, exposed brickwork to fill the 
+                gaps left by bombs, creating a dialogue between historical grandeur and wartime trauma. This philosophy transformed the inner city from a site of destruction into a resilient pedestrian-scale core. By rejecting radical urban experiments, Munich preserved its human-centric 
+                identity and cultural continuity, ensuring that the modern city remained deeply rooted in its thousand-year heritage while adapting to the functional needs of the 20th century.`,
+                image: "https://www.merkur.de/assets/images/36/655/36655745-muenchen-1945-zerstoerte-innenstadt-strassenszene-vor-dem-karlstor-re9.jpg",
+                lat: 48.137, lng: 11.575,
+                defaultLayerIndex: 3, // 1949
+                initialZoom: 15
+            }
+        ];
+
+        // ... (Core Utility Functions remain same: webMercatorToLatLng, calculateAnchors) ...
+        function webMercatorToLatLng(x, y) {
+            const rMajor = 6378137.0; const shift = Math.PI * rMajor; const lon = (x / shift) * 180.0;
+            let lat = (y / shift) * 180.0; lat = 180.0 / Math.PI * (2.0 * Math.atan(Math.exp(lat * Math.PI / 180.0)) - Math.PI / 2.0);
+            return L.latLng(lat, lon);
+        }
+        function calculateAnchors(w, h, jgwx) {
+            const { A, B, C, D, E, F } = jgwx;
+            const tlX = C; const tlY = F;
+            const trX = (A * w) + (B * 0) + C; const trY = (D * w) + (E * 0) + F;
+            const blX = (A * 0) + (B * h) + C; const blY = (D * 0) + (E * h) + F;
+            const tl = webMercatorToLatLng(tlX, tlY); const tr = webMercatorToLatLng(trX, trY); const bl = webMercatorToLatLng(blX, blY);
+            return { tl, tr, bl };
+        }
+
+        // =========================================================================
+        // 3. Page initialization
+        // =========================================================================
+
+        let currentSlideIndex = 0;
+        let isTransitioning = false;
+        const totalSlides = slidesData.length;
+        const mapPairs = [];
+
+        // Initialize map only when type is 0.
+        async function initSwipeMap(index) {
+            const slide = slidesData[index];
+            if (slide.type !== 0) return; 
+
+            const containerId = `swipe-container-${index}`;
+            const container = document.getElementById(containerId);
+
+            if (typeof L === 'undefined' || !container) return;
+
+            // DOM construction
+            const rightMapDiv = document.createElement('div');
+            rightMapDiv.id = `map-right-${index}`;
+            rightMapDiv.className = 'map-layer map-right';
+            container.appendChild(rightMapDiv);
+
+            const leftMapDiv = document.createElement('div');
+            leftMapDiv.id = `map-left-${index}`;
+            leftMapDiv.className = 'map-layer map-left';
+            container.appendChild(leftMapDiv);
+
+            // Map initialization
+            const mapConfig = {
+                center: [slide.lat, slide.lng],
+                zoom: slide.initialZoom || 13,
+                minZoom: 12, maxZoom: 17,
+                zoomControl: false, scrollWheelZoom: true, attributionControl: false
+            };
+
+            const mapRight = L.map(rightMapDiv, mapConfig);
+            const mapLeft = L.map(leftMapDiv, { ...mapConfig, zoomControl: false });
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap'
+            }).addTo(mapRight);
+
+            const markerIcon = L.icon({
+                iconUrl: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(`
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#0D9488" stroke="white" stroke-width="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <circle cx="12" cy="12" r="3" fill="white" />
+                    </svg>`),
+                iconSize: [24, 24], iconAnchor: [12, 12]
+            });
+            L.marker([slide.lat, slide.lng], { icon: markerIcon }).addTo(mapRight);
+            L.marker([slide.lat, slide.lng], { icon: markerIcon }).addTo(mapLeft);
+
+            // 历史图层加载器 Historical layer loader
+            let currentOverlay = null;
+            async function loadHistoricalLayer(layerIndex, btnElement = null) {
+                let originalText = '';
+                if (btnElement) {
+                    originalText = btnElement.innerText;
+                    btnElement.innerHTML = '<div class="loading-spinner" style="width:12px;height:12px;border-width:2px;"></div>';
+                }
+                try {
+                    const config = HISTORICAL_LAYERS[layerIndex];
+                    const anchors = calculateAnchors(config.width, config.height, config.jgwx);
+
+                    if (currentOverlay) mapLeft.removeLayer(currentOverlay);
+
+                    currentOverlay = new L.RotatedImageOverlay(config.imageUrl, anchors.tl, anchors.tr, anchors.bl, {
+                        opacity: 1, interactive: false, rawWidth: config.width, rawHeight: config.height
+                    });
+                    currentOverlay.addTo(mapLeft);
+
+                    if (mapPairs[index]) mapPairs[index].overlay = currentOverlay;
+
+                    const imgNode = currentOverlay.getElement();
+                    if (imgNode) {
+                        imgNode.style.transition = 'filter 0.5s';
+                        if (config.year === '1940') imgNode.style.filter = 'grayscale(100%) contrast(120%)';
+                        else if (config.year === '1999') imgNode.style.filter = 'sepia(30%)';
+                        else imgNode.style.filter = 'none';
+                    }
+                } catch (e) { console.error("Error loading layer:", e); }
+                finally { if (btnElement) btnElement.innerText = originalText; }
+            }
+
+            // 年份按钮 Year buttons
+            const yearNav = document.createElement('div');
+            yearNav.className = 'absolute left-4 top-1/2 -translate-y-1/2 flex flex-col gap-3 z-[40] pointer-events-auto';
+            const defaultLayerIndex = slide.defaultLayerIndex !== undefined ? slide.defaultLayerIndex : 0;
+
+            HISTORICAL_LAYERS.forEach((layer, layerIdx) => {
+                const btnWrapper = document.createElement('div');
+                btnWrapper.className = 'relative group';
+                const btn = document.createElement('button');
+                const isActive = layerIdx === defaultLayerIndex;
+                btn.className = `w-8 h-8 rounded-full bg-white/80 hover:bg-white shadow-md flex items-center justify-center transition-all duration-300 font-mono text-[10px] font-bold text-teal-800 ${isActive ? 'year-btn-active' : ''}`;
+                btn.innerText = layer.year.slice(-2);
+                const tooltip = document.createElement('div');
+                tooltip.className = 'absolute left-full top-1/2 -translate-y-1/2 ml-3 px-2 py-1 bg-gray-900/90 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none backdrop-blur-sm shadow-sm';
+                tooltip.innerText = layer.label;
+                btn.onclick = () => {
+                    const allBtns = yearNav.querySelectorAll('button');
+                    allBtns.forEach(b => b.classList.remove('year-btn-active'));
+                    btn.classList.add('year-btn-active');
+                    loadHistoricalLayer(layerIdx, btn);
+                };
+                btnWrapper.appendChild(btn); btnWrapper.appendChild(tooltip); yearNav.appendChild(btnWrapper);
+            });
+            container.appendChild(yearNav);
+
+            loadHistoricalLayer(defaultLayerIndex);
+
+            // 卷帘控件 Swipe control
+            const divider = document.createElement('div');
+            divider.className = 'swipe-divider';
+            divider.innerHTML = `<div class="swipe-handle"><i data-lucide="chevrons-left-right" class="w-4 h-4 text-teal-700"></i></div>`;
+            container.appendChild(divider);
+
+            let isSyncingLeft = false, isSyncingRight = false;
+            mapLeft.on('move', () => { if (!isSyncingRight) { isSyncingLeft = true; mapRight.setView(mapLeft.getCenter(), mapLeft.getZoom(), { animate: false }); isSyncingLeft = false; } });
+            mapRight.on('move', () => { if (!isSyncingLeft) { isSyncingRight = true; mapLeft.setView(mapRight.getCenter(), mapRight.getZoom(), { animate: false }); isSyncingRight = false; } });
+
+            function updateClip(percentage) {
+                leftMapDiv.style.clipPath = `inset(0 ${100 - percentage}% 0 0)`;
+                divider.style.left = `${percentage}%`;
+            }
+
+            let isDragging = false;
+            const startDrag = (e) => { isDragging = true; divider.classList.add('dragging'); e.preventDefault(); };
+            const stopDrag = () => { if (isDragging) { isDragging = false; divider.classList.remove('dragging'); } };
+            const onDrag = (e) => {
+                if (!isDragging) return;
+                const rect = container.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                let x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+                updateClip((x / rect.width) * 100);
+            };
+
+            divider.addEventListener('mousedown', startDrag); divider.addEventListener('touchstart', startDrag);
+            window.addEventListener('mouseup', stopDrag); window.addEventListener('touchend', stopDrag);
+            window.addEventListener('mousemove', onDrag); window.addEventListener('touchmove', onDrag);
+
+            updateClip(50);
+            mapPairs[index] = { left: mapLeft, right: mapRight, overlay: currentOverlay };
+        }
+
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                if (typeof L !== 'undefined') {
+                    slidesData.forEach((_, index) => initSwipeMap(index));
+                    lucide.createIcons();
+                }
+            }, 100);
+            // Initial check of scroll indicator state
+            updateScrollIndicatorState(0);
+        });
+
+        // Main render loop
+        const sliderContainer = document.getElementById('slider-container');
+        const dotsContainer = document.getElementById('dots-container');
+
+        slidesData.forEach((slide, index) => {
+            const slideEl = document.createElement('div');
+            slideEl.className = 'w-full h-full relative';
+
+            // === Rendering Logic Branching ===
+
+            if (slide.type === 1) {
+                // --- Type 1: Cover ---
+                // Determine font size based on isMainCover
+                const titleSize = slide.isMainCover
+                    ? 'text-6xl md:text-8xl'
+                    : 'text-4xl md:text-6xl';
+
+                // Ensure time period in brackets is not truncated
+                // Handled in data source via <span class="whitespace-nowrap"> or <br>
+
+                slideEl.innerHTML = `
+                    <div class="absolute inset-0 w-full h-full">
+                        <img src="${slide.image}" class="w-full h-full object-cover" />
+                        <div class="absolute inset-0 bg-black/40 flex flex-col items-center justify-center text-center text-white p-12">
+                            <h1 class="${titleSize} font-serif font-bold mb-6 tracking-tight drop-shadow-lg max-w-5xl leading-tight">
+                                ${slide.title}
+                            </h1>
+                            <div class="w-24 h-1 bg-teal-500 mb-6 shadow-lg"></div>
+                            <h2 class="text-xl md:text-2xl font-light tracking-widest uppercase drop-shadow-md max-w-3xl leading-relaxed">
+                                ${slide.subtitle}
+                            </h2>
+                        </div>
+                    </div>
+                `;
+            } else if (slide.type === 2) {
+                // --- Type 2: Image & Text ---
+                slideEl.innerHTML = `
+                    <div class="w-full h-full flex flex-row bg-white relative">
+                        <div class="w-1/2 h-full flex flex-col border-r border-gray-200 shadow-xl z-10 relative bg-white">
+                            <div id="text-scroll-${index}" class="h-full w-full p-12 overflow-y-auto bg-white scroll-smooth scrollbar-hide group">
+                                <div class="max-w-xl mx-auto space-y-6 pt-12">
+                                    <div class="flex items-center gap-4 mb-2">
+                                        <div class="w-10 h-10 rounded-full bg-teal-600 text-white flex items-center justify-center font-bold text-xl shadow-lg shadow-teal-200">${index + 1}</div>
+                                        <span class="text-gray-400 font-mono text-sm tracking-widest">Introduction</span>
+                                    </div>
+                                    <div>
+                                        <h1 class="text-4xl font-extrabold text-slate-900 mb-2 leading-tight">${slide.title}</h1>
+                                        <h2 class="text-lg text-teal-600 font-medium">${slide.subtitle}</h2>
+                                    </div>
+                                    <div class="prose prose-slate prose-lg text-slate-600 leading-relaxed text-justify">
+                                        <p>${slide.description}</p>
+                                        <p class="text-sm text-gray-400 mt-8 italic border-t pt-4">[End of section. Scroll for next slide.]</p>
+                                        <div class="h-32"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="w-1/2 h-full relative bg-gray-100 overflow-hidden">
+                            <img src="${slide.image}" class="w-full h-full object-cover">
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60"></div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                // --- Type 0: Classic Map ---
+                slideEl.innerHTML = `
+                    <div class="w-full h-full flex flex-row bg-white relative">
+                        <div class="w-1/2 h-full flex flex-col border-r border-gray-200 shadow-xl z-10 relative">
+                            <div class="h-[45%] w-full bg-slate-100 relative overflow-hidden border-b border-gray-200">
+                                <div class="absolute top-4 left-4 z-40 bg-white/90 backdrop-blur px-3 py-1 shadow-sm rounded-md text-xs font-semibold uppercase tracking-wider text-slate-500 flex items-center gap-1 pointer-events-none">
+                                    <i data-lucide="history" class="w-3 h-3 text-teal-600"></i> Dynamic Historical Map
+                                </div>
+                                <div id="swipe-container-${index}" class="swipe-map-container"></div>
+                            </div>
+                            <div id="text-scroll-${index}" class="h-[55%] w-full p-12 overflow-y-auto bg-white scroll-smooth scrollbar-hide group">
+                                <div class="max-w-xl mx-auto space-y-6">
+                                    <div class="flex items-center gap-4 mb-2">
+                                        <div class="w-10 h-10 rounded-full bg-teal-600 text-white flex items-center justify-center font-bold text-xl shadow-lg shadow-teal-200">${index + 1}</div>
+                                        <span class="text-gray-400 font-mono text-sm tracking-widest">0${index + 1} / 0${totalSlides}</span>
+                                    </div>
+                                    <div>
+                                        <h1 class="text-4xl font-extrabold text-slate-900 mb-2 leading-tight">${slide.title}</h1>
+                                        <h2 class="text-lg text-teal-600 font-medium">${slide.subtitle}</h2>
+                                    </div>
+                                    <div class="prose prose-slate prose-lg text-slate-600 leading-relaxed text-justify">
+                                        <p>${slide.description}</p>
+                                        <p class="text-sm text-gray-400 mt-8 italic border-t pt-4">[End of section. Scroll for next slide.]</p>
+                                        <div class="h-16"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="w-1/2 h-full relative bg-gray-100 overflow-hidden">
+                            <img src="${slide.image}" alt="${slide.title}" class="w-full h-full object-cover">
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60"></div>
+                            <div class="absolute bottom-12 right-12 text-white text-right max-w-sm">
+                                <p class="text-sm uppercase tracking-widest opacity-80 mb-1">Explore Munich</p>
+                                <p class="text-2xl font-serif italic">"${slide.title}"</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            sliderContainer.appendChild(slideEl);
+
+            const dot = document.createElement('button');
+            dot.className = `w-3 h-3 rounded-full transition-all duration-300 ${index === 0 ? 'bg-white scale-125 shadow-lg ring-2 ring-teal-500' : 'bg-white/40 hover:bg-white/80'}`;
+            dot.onclick = () => manualJump(index);
+            dotsContainer.appendChild(dot);
+        });
+
+        // Handle scroll indicator position uniformly
+        function updateScrollIndicatorState(slideIndex) {
+            const indicator = document.getElementById('scroll-indicator');
+            const slide = slidesData[slideIndex];
+
+            // Hide indicator if it is the last page
+            if (slideIndex === totalSlides - 1) {
+                indicator.style.opacity = '0';
+            } else {
+                indicator.style.opacity = '1';
+
+                // If Type 1 (Cover), display in center
+                if (slide.type === 1) {
+                    indicator.classList.add('center-mode');
+                } else {
+                    // Otherwise (Type 0, Type 2), align left (at bottom of text area)
+                    indicator.classList.remove('center-mode');
+                }
+            }
+        }
+
+        function updateUI() {
+            sliderContainer.style.transform = `translateY(-${currentSlideIndex * 100}%)`;
+            const dots = dotsContainer.children;
+            for (let i = 0; i < dots.length; i++) {
+                dots[i].className = i === currentSlideIndex
+                    ? 'w-3 h-3 rounded-full transition-all duration-300 bg-white scale-125 shadow-lg ring-2 ring-teal-500'
+                    : 'w-3 h-3 rounded-full transition-all duration-300 bg-white/40 hover:bg-white/80';
+            }
+
+            // Update scroll indicator state
+            updateScrollIndicatorState(currentSlideIndex);
+
+            setTimeout(() => {
+                if (slidesData[currentSlideIndex].type === 0 && mapPairs[currentSlideIndex]) {
+                    mapPairs[currentSlideIndex].left.invalidateSize();
+                    mapPairs[currentSlideIndex].right.invalidateSize();
+                }
+            }, 500);
+        }
+
+        function triggerPageChange(newIndex, isUpwards) {
+            isTransitioning = true;
+            currentSlideIndex = newIndex;
+            updateUI();
+            setTimeout(() => {
+                isTransitioning = false;
+                if (isUpwards) {
+                    const el = document.getElementById(`text-scroll-${newIndex}`);
+                    if (el) el.scrollTop = 0;
+                }
+            }, 800);
+        }
+
+        function manualJump(index) { if (isTransitioning || index === currentSlideIndex) return; triggerPageChange(index, index < currentSlideIndex); const el = document.getElementById(`text-scroll-${index}`); if (el) el.scrollTop = 0; }
+
+        window.addEventListener('wheel', (e) => {
+            if (isTransitioning) return;
+
+            const slide = slidesData[currentSlideIndex];
+
+            // === Handle Type 1 (Cover): No internal scroll, direct page flip ===
+            if (slide.type === 1) {
+                if (e.deltaY > 0) {
+                    if (currentSlideIndex < totalSlides - 1) triggerPageChange(currentSlideIndex + 1, false);
+                } else {
+                    if (currentSlideIndex > 0) triggerPageChange(currentSlideIndex - 1, true);
+                }
+                return;
+            }
+
+            //=== Handle Type 0 & 2: Check internal text area scroll ===
+            const el = document.getElementById(`text-scroll-${currentSlideIndex}`);
+            if (!el) return;
+            const { scrollTop, scrollHeight, clientHeight } = el;
+
+            if (e.deltaY > 0) {
+                if (Math.abs(scrollHeight - clientHeight - scrollTop) < 2) {
+                    if (currentSlideIndex < totalSlides - 1) triggerPageChange(currentSlideIndex + 1, false);
+                }
+            } else {
+                if (scrollTop <= 0) {
+                    if (currentSlideIndex > 0) triggerPageChange(currentSlideIndex - 1, true);
+                }
+            }
+        }, { passive: false });
+    </script>
+</body>
+
+</html>
